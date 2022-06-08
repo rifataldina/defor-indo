@@ -1,0 +1,296 @@
+Map.setOptions('SATELLITE')
+var loss = ee.Image("UMD/hansen/global_forest_change_2021_v1_9")
+    .select('lossyear');
+var lossyear = loss.selfMask();
+var count = lossyear.eq([1, 2, 3, 4, 5,
+    6, 7, 8, 9, 10, 11, 12, 13, 14,
+    15, 16, 17, 18, 19, 20, 21
+]).rename(['2001', '2002', '2003',
+    '2004', '2005', '2006', '2007',
+    '2008', '2009', '2010', '2011',
+    '2012', '2013', '2014', '2015',
+    '2016', '2017', '2018', '2019', '2020', '2021'
+]);
+
+var total = count.multiply(ee.Image
+    .pixelArea()).divide(10000);
+
+var P_outline = ee.Image().byte().paint({
+    featureCollection: Indonesia,
+    color: 1,
+    width: 3
+});
+
+
+var palettes = require('users/gena/packages:palettes');
+var palette = palettes.colorbrewer.OrRd[9];
+
+var LOSS_STYLE = {
+    min: 1,
+    max: 20,
+    palette: palette,
+    //opacity: 0
+};
+
+var PA_STYLE = {
+    color: 'FFFFFF',
+    fillColor: 'FFFFFF'
+};
+
+var HIGHLIGHT_STYLE = {
+    color: 'black',
+    fillColor: '#00000000',
+};
+
+// Configure our map with a minimal set of controls.
+Map.setControlVisibility(false);
+Map.setControlVisibility({
+    scaleControl: true,
+    zoomControl: true
+});
+Map.style().set({
+    cursor: 'crosshair'
+});
+Map.setCenter(118, -1.6, 5);
+
+// Add the loss layer. 
+Map.addLayer(loss.mask(loss).clip(Indonesia),
+    LOSS_STYLE);
+
+
+// A list of points the user has clicked on, as [lon,lat] tuples.
+var selectedPoints = [];
+
+// Returns the list of provinces the user has selected.
+function getSelectedIndonesia() {
+    return Indonesia.filterBounds(ee
+        .Geometry.MultiPoint(
+            selectedPoints));
+}
+
+// // Makes a bar chart of the given FeatureCollection of protected areas by name.
+function makeResultsBarChart(
+    Indonesia) {
+    var chart = ui.Chart.image.regions({
+            image: total,
+            regions: Indonesia,
+            reducer: ee.Reducer.sum(),
+            scale: 30,
+            seriesProperty: 'PROVINSI'
+        })
+        .setChartType('ColumnChart');
+    chart.setOptions({
+        title: 'Tree loss (Deforestation) 2001-2021',
+
+        vAxis: {
+            title: 'hectare'
+        },
+        hAxis: {
+            title: 'Year',
+            minValue: 1,
+            textStyle: {
+                fontSize: 9
+            },
+        },
+        width: 1000,
+        height: 300,
+        fontName: 'Roboto Mono',
+    });
+    chart.style().set({
+        stretch: 'both'
+    });
+    return chart;
+}
+
+
+// // Update the map overlay using the selected protected area.
+function updateOverlay() {
+    var overlay =
+        getSelectedIndonesia()
+    Map.layers().set(2, ui.Map.Layer(
+        overlay.style(HIGHLIGHT_STYLE)));
+}
+
+function updateChart() {
+    var chartBuilder =
+        chartTypeToggleButton.value;
+    var chart = chartBuilder(
+        getSelectedIndonesia());
+    resultsPanel.clear().add(chart).add(
+        buttonPanel);
+}
+
+// // Clear the selected polygon and reset the overlay and results panel to the default.
+function clearResults() {
+    selectedPoints = [];
+    Map.layers().remove(Map.layers().get(
+        2));
+    resultsPanel.widgets().reset();
+}
+
+// // list and updates the map overlay and chart accordingly.
+function handleMapClick(location) {
+    selectedPoints.push([location.lon,
+        location.lat
+    ]);
+    updateOverlay();
+    updateChart();
+}
+Map.onClick(handleMapClick);
+
+function ToggleButton(states, onClick) {
+    var index = 0;
+    var button = ui.Button(states[index]
+        .label);
+    button.value = states[index].value;
+    button.onClick(function() {
+        index = ++index % states.length;
+        button.setLabel(states[index]
+            .label);
+        button.value = states[index]
+            .value;
+        onClick();
+    });
+    return button;
+}
+
+var chartTypeToggleButton =
+    ToggleButton(
+        [{
+                label: 'Display results as a bar chart',
+                value: makeResultsBarChart,
+            },
+            {
+                //  label: 'Display results as a table',
+                //  value: makeResultsTable,
+            }
+        ],
+        updateChart);
+
+
+var buttonPanel = ui.Panel(
+    [ui.Button('Clear results',
+        clearResults)],
+    ui.Panel.Layout.Flow(
+        'horizontal'), {
+        margin: '0 0 0 auto',
+        width: '600px',
+        height: 'auto',
+    });
+
+var resultsPanel = ui.Panel({
+    style: {
+        position: 'bottom-right',
+    }
+});
+Map.add(resultsPanel);
+clearResults();
+
+// Set the default map's cursor to a "crosshair".
+Map.style().set('cursor', 'crosshair');
+Map.addLayer(P_outline, {
+    palette: 'FFFFFF'
+}, 'edges');
+
+// Add title.
+var title = ui.Label(
+    'Indonesia Annual Tree Loss based in Province', {
+        fontFamily: 'Roboto Mono',
+        fontSize: '18px',
+        margin: '4px 8px',
+    });
+
+var body = ui.Label(
+    'Click on particular province to analyse the provincial deforestation', {
+        fontFamily: 'Roboto Mono',
+        fontSize: '12px',
+        margin: '4px 8px',
+    });
+
+var colorbarOptions1 = {
+    'min': '2001',
+    'max': '2021',
+    'palette': palette
+};
+
+// // Creates a color bar thumbnail image for use in legend from the given color
+// // palette.
+
+function makeColorBarParams(palette) {
+    return {
+        bbox: [0, 0, 1, 0.1],
+        dimensions: '100x10',
+        format: 'png',
+        min: 0,
+        max: 1,
+        palette: palette,
+    };
+}
+
+// Create the color bar for the legend.
+var colorBar = ui.Thumbnail({
+    image: ee.Image.pixelLonLat().select(0),
+    params: makeColorBarParams(colorbarOptions1.palette),
+    style: {
+        stretch: 'horizontal',
+        margin: '0px 8px',
+        maxHeight: '24px',
+        position: 'bottom-right',
+    },
+});
+
+// Create a panel with min & max for the legend.
+var legendLabels = ui.Panel({
+    widgets: [
+        ui.Label(colorbarOptions1.min, {
+            margin: '4px 8px',
+            fontFamily: 'Roboto Mono'
+        }),
+        ui.Label(
+            (""), {
+                margin: '4px 8px',
+                textAlign: 'center',
+                stretch: 'horizontal'
+            }),
+        ui.Label(colorbarOptions1.max, {
+            margin: '4px 8px',
+            fontFamily: 'Roboto Mono'
+        }),
+
+    ],
+
+    layout: ui.Panel.Layout.flow('horizontal')
+});
+
+// citations and links
+var hansen = ui.Label(
+    'Hansen Global Forest Change', {
+        fontFamily: 'Roboto Mono',
+        margin: '4px 8px',
+        fontSize: '10px',
+    });
+
+var big = ui.Label("Geospatial Information Agency, Indonesia", {
+    fontFamily: 'Roboto Mono',
+    fontSize: '10px',
+    margin: '4px 8px',
+    textAlign: 'left',
+    stretch: 'horizontal'
+});
+
+
+// Create a panel that contains both the slider and the label.
+var panel = ui.Panel({
+    widgets: [title, body, colorBar, legendLabels],
+    layout: ui.Panel.Layout.flow('vertical'),
+    style: {
+        position: 'bottom-left',
+        width: '550px',
+        padding: '8px',
+        fontFamily: 'Roboto Mono'
+    }
+});
+
+// Add the panel to the map.
+Map.add(panel);
+panel.add(hansen).add(big);
